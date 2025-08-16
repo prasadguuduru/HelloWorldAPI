@@ -1,0 +1,49 @@
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-fetch"
+      ],
+      "env": {},
+      "disabled": false,
+      "autoApprove": []
+    },
+    "filesystem": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-filesystem",
+        "--base-directory",
+        "."
+      ],
+      "env": {},
+      "disabled": false,
+      "autoApprove": []
+    },
+    "git": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-git"
+      ],
+      "env": {},
+      "disabled": false,
+      "autoApprove": []
+    },
+    "sqlite": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-sqlite"
+      ],
+      "env": {},
+      "disabled": false,
+      "autoApprove": []
+    },
+    "aws-lambda-mcp": {
+      "url": "http://localhost:3000",
+      "disabled": false,
+      "autoApprove": [
+        "ping"
+      ]
+    }
+  }
+}

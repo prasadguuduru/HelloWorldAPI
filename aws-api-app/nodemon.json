@@ -1,0 +1,20 @@
+{
+  "watch": [
+    "src/**/*"
+  ],
+  "ext": "ts,js,json",
+  "ignore": [
+    "lib/**/*",
+    "node_modules/**/*",
+    "tests/**/*",
+    "coverage/**/*",
+    ".aws-sam/**/*"
+  ],
+  "exec": "npm run build && echo 'Build completed - SAM will auto-reload'",
+  "env": {
+    "NODE_ENV": "development",
+    "LOG_LEVEL": "DEBUG"
+  },
+  "delay": 1000,
+  "verbose": true
+}

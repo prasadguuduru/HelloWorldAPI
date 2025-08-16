@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  # LocalStack for AWS services emulation (optional)
+  localstack:
+    image: localstack/localstack:latest
+    container_name: aws-api-app-localstack
+    ports:
+      - "4566:4566"  # LocalStack main port
+      - "4571:4571"  # LocalStack additional port
+    environment:
+      - SERVICES=lambda,apigateway,cloudwatch,logs,iam
+      - DEBUG=1
+      - DATA_DIR=/tmp/localstack/data
+      - LAMBDA_EXECUTOR=docker
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - "/tmp/localstack:/tmp/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    networks:
+      - aws-api-network
+    profiles:
+      - localstack
+
+  # DynamoDB Local (if you want to add database later)
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: aws-api-app-dynamodb
+    ports:
+      - "8000:8000"
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]
+    networks:
+      - aws-api-network
+    profiles:
+      - database
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: aws-api-app-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - aws-api-network
+    profiles:
+      - cache
+
+  # Development proxy for CORS and routing
+  dev-proxy:
+    image: nginx:alpine
+    container_name: aws-api-app-proxy
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - localstack
+    networks:
+      - aws-api-network
+    profiles:
+      - proxy
+
+volumes:
+  redis-data:
+
+networks:
+  aws-api-network:
+    driver: bridge

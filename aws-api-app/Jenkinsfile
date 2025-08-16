@@ -1,0 +1,357 @@
+pipeline {
+    agent any
+    
+    environment {
+        NODE_VERSION = '18'
+        TERRAFORM_VERSION = '1.5.0'
+        AWS_DEFAULT_REGION = 'us-east-1'
+        AWS_CREDENTIALS = credentials('aws-credentials')
+        SNYK_TOKEN = credentials('snyk-token')
+    }
+    
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 1, unit: 'HOURS')
+        skipStagesAfterUnstable()
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+            }
+        }
+        
+        stage('Setup') {
+            parallel {
+                stage('Setup Node.js') {
+                    steps {
+                        sh '''
+                            # Install Node.js using NodeJS plugin or nvm
+                            node --version
+                            npm --version
+                        '''
+                    }
+                }
+                
+                stage('Setup Terraform') {
+                    steps {
+                        sh '''
+                            # Install Terraform
+                            if ! command -v terraform &> /dev/null; then
+                                wget https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+                                unzip terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+                                sudo mv terraform /usr/local/bin/
+                            fi
+                            terraform version
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Install Dependencies') {
+            steps {
+                sh 'npm ci'
+            }
+        }
+        
+        stage('Code Quality') {
+            parallel {
+                stage('Lint') {
+                    steps {
+                        sh 'npm run lint'
+                    }
+                    post {
+                        always {
+                            publishHTML([
+                                allowMissing: false,
+                                alwaysLinkToLastBuild: true,
+                                keepAll: true,
+                                reportDir: 'eslint-report',
+                                reportFiles: 'index.html',
+                                reportName: 'ESLint Report'
+                            ])
+                        }
+                    }
+                }
+                
+                stage('Security Audit') {
+                    steps {
+                        script {
+                            try {
+                                sh 'npm audit --audit-level high'
+                            } catch (Exception e) {
+                                unstable('Security vulnerabilities found')
+                            }
+                        }
+                    }
+                }
+                
+                stage('Snyk Security Scan') {
+                    steps {
+                        script {
+                            try {
+                                sh '''
+                                    npm install -g snyk
+                                    snyk auth $SNYK_TOKEN
+                                    snyk test --severity-threshold=high
+                                '''
+                            } catch (Exception e) {
+                                unstable('Snyk security issues found')
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Test') {
+            parallel {
+                stage('Unit Tests') {
+                    steps {
+                        sh 'npm run test:unit'
+                    }
+                    post {
+                        always {
+                            publishTestResults testResultsPattern: 'coverage/junit.xml'
+                            publishHTML([
+                                allowMissing: false,
+                                alwaysLinkToLastBuild: true,
+                                keepAll: true,
+                                reportDir: 'coverage/lcov-report',
+                                reportFiles: 'index.html',
+                                reportName: 'Coverage Report'
+                            ])
+                        }
+                    }
+                }
+                
+                stage('Integration Tests') {
+                    steps {
+                        sh 'npm run test:integration'
+                    }
+                    post {
+                        always {
+                            publishTestResults testResultsPattern: 'coverage/junit.xml'
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                sh 'npm run build'
+                sh 'npm run dev:build'
+                
+                archiveArtifacts artifacts: 'lib/**/*', fingerprint: true
+                archiveArtifacts artifacts: 'package.json', fingerprint: true
+                archiveArtifacts artifacts: 'template.yaml', fingerprint: true
+            }
+        }
+        
+        stage('Terraform Validation') {
+            steps {
+                dir('terraform') {
+                    sh 'terraform fmt -check -recursive'
+                    sh 'terraform init -backend=false'
+                    sh 'terraform validate'
+                }
+            }
+        }
+        
+        stage('Deploy to Development') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                script {
+                    try {
+                        sh '''
+                            chmod +x scripts/deploy.sh
+                            ./scripts/deploy.sh dev apply
+                        '''
+                        
+                        // Get API URL for testing
+                        env.DEV_API_URL = sh(
+                            script: 'terraform -chdir=terraform output -raw api_gateway_stage_url',
+                            returnStdout: true
+                        ).trim()
+                        
+                        // Run smoke tests
+                        sh "curl -f ${env.DEV_API_URL}/items"
+                        
+                    } catch (Exception e) {
+                        currentBuild.result = 'FAILURE'
+                        throw e
+                    }
+                }
+            }
+            post {
+                success {
+                    slackSend(
+                        color: 'good',
+                        message: "✅ Development deployment successful: ${env.DEV_API_URL}"
+                    )
+                }
+                failure {
+                    slackSend(
+                        color: 'danger',
+                        message: "❌ Development deployment failed"
+                    )
+                }
+            }
+        }
+        
+        stage('Deploy to Staging') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    // Manual approval for staging
+                    input message: 'Deploy to staging?', ok: 'Deploy'
+                    
+                    try {
+                        sh '''
+                            chmod +x scripts/deploy.sh
+                            ./scripts/deploy.sh staging apply
+                        '''
+                        
+                        // Get API URL for testing
+                        env.STAGING_API_URL = sh(
+                            script: 'terraform -chdir=terraform output -raw api_gateway_stage_url',
+                            returnStdout: true
+                        ).trim()
+                        
+                        // Run staging tests
+                        sh "curl -f ${env.STAGING_API_URL}/items"
+                        
+                    } catch (Exception e) {
+                        currentBuild.result = 'FAILURE'
+                        throw e
+                    }
+                }
+            }
+            post {
+                success {
+                    slackSend(
+                        color: 'good',
+                        message: "✅ Staging deployment successful: ${env.STAGING_API_URL}"
+                    )
+                }
+                failure {
+                    slackSend(
+                        color: 'danger',
+                        message: "❌ Staging deployment failed"
+                    )
+                }
+            }
+        }
+        
+        stage('Deploy to Production') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    // Manual approval for production
+                    input message: 'Deploy to production?', ok: 'Deploy'
+                    
+                    try {
+                        sh '''
+                            chmod +x scripts/deploy.sh
+                            ./scripts/deploy.sh prod apply
+                        '''
+                        
+                        // Get API URL for testing
+                        env.PROD_API_URL = sh(
+                            script: 'terraform -chdir=terraform output -raw api_gateway_stage_url',
+                            returnStdout: true
+                        ).trim()
+                        
+                        // Run production smoke tests
+                        sh "curl -f ${env.PROD_API_URL}/items"
+                        
+                        // Create release tag
+                        sh """
+                            git tag v${BUILD_NUMBER}
+                            git push origin v${BUILD_NUMBER}
+                        """
+                        
+                    } catch (Exception e) {
+                        currentBuild.result = 'FAILURE'
+                        throw e
+                    }
+                }
+            }
+            post {
+                success {
+                    slackSend(
+                        color: 'good',
+                        message: "🚀 Production deployment successful: ${env.PROD_API_URL}"
+                    )
+                    
+                    // Create GitHub release
+                    sh """
+                        curl -X POST \
+                          -H "Authorization: token ${GITHUB_TOKEN}" \
+                          -H "Content-Type: application/json" \
+                          -d '{
+                            "tag_name": "v${BUILD_NUMBER}",
+                            "name": "Release v${BUILD_NUMBER}",
+                            "body": "Production deployment\\nCommit: ${GIT_COMMIT_SHORT}\\nAPI URL: ${PROD_API_URL}"
+                          }' \
+                          https://api.github.com/repos/\${GIT_URL#*github.com/}/releases
+                    """
+                }
+                failure {
+                    slackSend(
+                        color: 'danger',
+                        message: "❌ Production deployment failed"
+                    )
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Clean workspace
+            cleanWs()
+        }
+        
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        
+        failure {
+            echo 'Pipeline failed!'
+            
+            // Send failure notification
+            emailext (
+                subject: "Pipeline Failed: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
+                body: """
+                    Pipeline failed for ${env.JOB_NAME} - ${env.BUILD_NUMBER}
+                    
+                    Branch: ${env.BRANCH_NAME}
+                    Commit: ${env.GIT_COMMIT_SHORT}
+                    
+                    Check the build logs: ${env.BUILD_URL}
+                """,
+                to: "${env.CHANGE_AUTHOR_EMAIL}"
+            )
+        }
+        
+        unstable {
+            echo 'Pipeline completed with warnings!'
+        }
+    }
+}

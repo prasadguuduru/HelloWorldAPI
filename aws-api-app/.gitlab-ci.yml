@@ -1,0 +1,268 @@
+# GitLab CI/CD Pipeline for AWS API Gateway + Lambda Application
+
+stages:
+  - test
+  - security
+  - build
+  - deploy-dev
+  - deploy-staging
+  - deploy-prod
+
+variables:
+  NODE_VERSION: "18"
+  TERRAFORM_VERSION: "1.5.0"
+  AWS_DEFAULT_REGION: "us-east-1"
+
+# Cache configuration
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+    - .terraform/
+
+# Test Stage
+test:unit:
+  stage: test
+  image: node:${NODE_VERSION}
+  before_script:
+    - npm ci
+  script:
+    - npm run lint
+    - npm run test:unit
+  coverage: '/Lines\s*:\s*(\d+\.\d+)%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+      junit: coverage/junit.xml
+    paths:
+      - coverage/
+    expire_in: 1 week
+  only:
+    - merge_requests
+    - main
+    - develop
+
+test:integration:
+  stage: test
+  image: node:${NODE_VERSION}
+  services:
+    - docker:dind
+  before_script:
+    - npm ci
+    - npm run build
+  script:
+    - npm run test:integration
+  artifacts:
+    reports:
+      junit: coverage/junit.xml
+    expire_in: 1 week
+  only:
+    - merge_requests
+    - main
+    - develop
+
+# Security Stage
+security:audit:
+  stage: security
+  image: node:${NODE_VERSION}
+  before_script:
+    - npm ci
+  script:
+    - npm audit --audit-level high
+  allow_failure: true
+  only:
+    - merge_requests
+    - main
+    - develop
+
+security:snyk:
+  stage: security
+  image: node:${NODE_VERSION}
+  before_script:
+    - npm ci
+    - npm install -g snyk
+  script:
+    - snyk auth $SNYK_TOKEN
+    - snyk test --severity-threshold=high
+  allow_failure: true
+  only:
+    - merge_requests
+    - main
+    - develop
+
+# Build Stage
+build:
+  stage: build
+  image: node:${NODE_VERSION}
+  before_script:
+    - npm ci
+  script:
+    - npm run build
+    - npm run dev:build
+  artifacts:
+    paths:
+      - lib/
+      - package.json
+      - template.yaml
+    expire_in: 1 week
+  only:
+    - merge_requests
+    - main
+    - develop
+
+# Terraform Validation
+terraform:validate:
+  stage: build
+  image: 
+    name: hashicorp/terraform:${TERRAFORM_VERSION}
+    entrypoint: [""]
+  script:
+    - cd terraform
+    - terraform fmt -check -recursive
+    - terraform init -backend=false
+    - terraform validate
+  only:
+    - merge_requests
+    - main
+    - develop
+
+# Development Deployment
+deploy:dev:
+  stage: deploy-dev
+  image: 
+    name: hashicorp/terraform:${TERRAFORM_VERSION}
+    entrypoint: [""]
+  dependencies:
+    - build
+  before_script:
+    - apk add --no-cache nodejs npm bash curl
+    - chmod +x scripts/deploy.sh
+  script:
+    - ./scripts/deploy.sh dev apply
+  environment:
+    name: development
+    url: $API_GATEWAY_URL
+  artifacts:
+    reports:
+      dotenv: deploy.env
+  only:
+    - develop
+  when: manual
+
+# Staging Deployment
+deploy:staging:
+  stage: deploy-staging
+  image: 
+    name: hashicorp/terraform:${TERRAFORM_VERSION}
+    entrypoint: [""]
+  dependencies:
+    - build
+  before_script:
+    - apk add --no-cache nodejs npm bash curl
+    - chmod +x scripts/deploy.sh
+  script:
+    - ./scripts/deploy.sh staging apply
+    - echo "API_GATEWAY_URL=$(terraform -chdir=terraform output -raw api_gateway_stage_url)" >> deploy.env
+  after_script:
+    - |
+      # Run smoke tests
+      API_URL=$(terraform -chdir=terraform output -raw api_gateway_stage_url)
+      curl -f $API_URL/items || exit 1
+  environment:
+    name: staging
+    url: $API_GATEWAY_URL
+  artifacts:
+    reports:
+      dotenv: deploy.env
+  only:
+    - main
+  when: manual
+
+# Production Deployment
+deploy:prod:
+  stage: deploy-prod
+  image: 
+    name: hashicorp/terraform:${TERRAFORM_VERSION}
+    entrypoint: [""]
+  dependencies:
+    - build
+  before_script:
+    - apk add --no-cache nodejs npm bash curl
+    - chmod +x scripts/deploy.sh
+  script:
+    - ./scripts/deploy.sh prod apply
+    - echo "API_GATEWAY_URL=$(terraform -chdir=terraform output -raw api_gateway_stage_url)" >> deploy.env
+  after_script:
+    - |
+      # Run production smoke tests
+      API_URL=$(terraform -chdir=terraform output -raw api_gateway_stage_url)
+      curl -f $API_URL/items || exit 1
+      
+      # Create release tag
+      git tag "v${CI_PIPELINE_ID}"
+      git push origin "v${CI_PIPELINE_ID}"
+  environment:
+    name: production
+    url: $API_GATEWAY_URL
+  artifacts:
+    reports:
+      dotenv: deploy.env
+  only:
+    - main
+  when: manual
+
+# Rollback Jobs
+rollback:staging:
+  stage: deploy-staging
+  image: 
+    name: hashicorp/terraform:${TERRAFORM_VERSION}
+    entrypoint: [""]
+  script:
+    - echo "Rollback staging environment"
+    - # Add rollback logic here
+  environment:
+    name: staging
+    action: stop
+  when: manual
+  only:
+    - main
+
+rollback:prod:
+  stage: deploy-prod
+  image: 
+    name: hashicorp/terraform:${TERRAFORM_VERSION}
+    entrypoint: [""]
+  script:
+    - echo "Rollback production environment"
+    - # Add rollback logic here
+  environment:
+    name: production
+    action: stop
+  when: manual
+  only:
+    - main
+
+# Cleanup Jobs
+cleanup:dev:
+  stage: deploy-dev
+  image: 
+    name: hashicorp/terraform:${TERRAFORM_VERSION}
+    entrypoint: [""]
+  before_script:
+    - apk add --no-cache bash
+    - chmod +x scripts/deploy.sh
+  script:
+    - ./scripts/deploy.sh dev destroy
+  environment:
+    name: development
+    action: stop
+  when: manual
+  only:
+    - develop
+
+# Include additional pipeline configurations
+include:
+  - local: '.gitlab/ci/security.yml'
+  - local: '.gitlab/ci/performance.yml'
