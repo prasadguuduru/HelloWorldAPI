@@ -1,0 +1,481 @@
+openapi: 3.0.3
+info:
+  title: HelloWorld API
+  description: |
+    A RESTful API for managing items built with AWS Lambda and API Gateway.
+    
+    This API provides CRUD operations for items with features like:
+    - Item creation, retrieval, updating, and deletion
+    - Filtering by status
+    - Pagination support
+    - Comprehensive error handling
+    - CORS support
+    
+    **GitHub Repository**: https://github.com/prasadguuduru/HelloWorldAPI
+  version: 1.0.0
+  contact:
+    name: API Support
+    url: https://github.com/prasadguuduru/HelloWorldAPI/issues
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.example.com/v1
+    description: Production server
+  - url: https://staging-api.example.com/v1
+    description: Staging server
+
+paths:
+  /items:
+    get:
+      summary: List all items
+      description: Retrieve a paginated list of items with optional filtering by status
+      operationId: listItems
+      tags:
+        - Items
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of items to return (1-100)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: offset
+          in: query
+          description: Number of items to skip for pagination
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: status
+          in: query
+          description: Filter items by status
+          required: false
+          schema:
+            type: string
+            enum: [active, inactive]
+      responses:
+        '200':
+          description: Items retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemListResponse'
+              examples:
+                success:
+                  summary: Successful response
+                  value:
+                    success: true
+                    data:
+                      - id: "1"
+                        name: "Sample Item 1"
+                        description: "This is a sample item for testing"
+                        status: "active"
+                        createdAt: "2024-01-01T00:00:00.000Z"
+                        updatedAt: "2024-01-01T00:00:00.000Z"
+                      - id: "2"
+                        name: "Sample Item 2"
+                        description: "Another sample item"
+                        status: "inactive"
+                        createdAt: "2024-01-02T00:00:00.000Z"
+                        updatedAt: "2024-01-02T00:00:00.000Z"
+                    message: "Items retrieved successfully"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      summary: Create a new item
+      description: Create a new item with the provided name and description
+      operationId: createItem
+      tags:
+        - Items
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateItemRequest'
+            examples:
+              example1:
+                summary: Create new item
+                value:
+                  name: "New Item"
+                  description: "Description of the new item"
+      responses:
+        '201':
+          description: Item created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemResponse'
+              examples:
+                success:
+                  summary: Item created
+                  value:
+                    success: true
+                    data:
+                      id: "4"
+                      name: "New Item"
+                      description: "Description of the new item"
+                      status: "active"
+                      createdAt: "2024-01-15T10:30:00.000Z"
+                      updatedAt: "2024-01-15T10:30:00.000Z"
+                    message: "Item created successfully"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /items/{id}:
+    get:
+      summary: Get item by ID
+      description: Retrieve a specific item by its unique identifier
+      operationId: getItem
+      tags:
+        - Items
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Unique identifier of the item
+          schema:
+            type: string
+            pattern: '^[1-9]\d*$'
+          example: "1"
+      responses:
+        '200':
+          description: Item retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemResponse'
+              examples:
+                success:
+                  summary: Item found
+                  value:
+                    success: true
+                    data:
+                      id: "1"
+                      name: "Sample Item 1"
+                      description: "This is a sample item for testing"
+                      status: "active"
+                      createdAt: "2024-01-01T00:00:00.000Z"
+                      updatedAt: "2024-01-01T00:00:00.000Z"
+                    message: "Item retrieved successfully"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      summary: Update an existing item
+      description: Update an existing item's properties
+      operationId: updateItem
+      tags:
+        - Items
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Unique identifier of the item to update
+          schema:
+            type: string
+            pattern: '^[1-9]\d*$'
+          example: "1"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateItemRequest'
+            examples:
+              updateName:
+                summary: Update item name
+                value:
+                  name: "Updated Item Name"
+              updateStatus:
+                summary: Update item status
+                value:
+                  status: "inactive"
+              updateAll:
+                summary: Update all fields
+                value:
+                  name: "Completely Updated Item"
+                  description: "New description"
+                  status: "active"
+      responses:
+        '200':
+          description: Item updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemResponse'
+              examples:
+                success:
+                  summary: Item updated
+                  value:
+                    success: true
+                    data:
+                      id: "1"
+                      name: "Updated Item Name"
+                      description: "This is a sample item for testing"
+                      status: "active"
+                      createdAt: "2024-01-01T00:00:00.000Z"
+                      updatedAt: "2024-01-15T10:30:00.000Z"
+                    message: "Item updated successfully"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      summary: Delete an item
+      description: Delete an existing item by its unique identifier
+      operationId: deleteItem
+      tags:
+        - Items
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Unique identifier of the item to delete
+          schema:
+            type: string
+            pattern: '^[1-9]\d*$'
+          example: "1"
+      responses:
+        '200':
+          description: Item deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        example: "1"
+                  message:
+                    type: string
+                    example: "Item deleted successfully"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  schemas:
+    Item:
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the item
+          example: "1"
+        name:
+          type: string
+          description: Name of the item
+          minLength: 1
+          maxLength: 100
+          example: "Sample Item"
+        description:
+          type: string
+          description: Description of the item
+          maxLength: 500
+          example: "This is a sample item for testing"
+        status:
+          type: string
+          enum: [active, inactive]
+          description: Current status of the item
+          example: "active"
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the item was created
+          example: "2024-01-01T00:00:00.000Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the item was last updated
+          example: "2024-01-01T00:00:00.000Z"
+
+    CreateItemRequest:
+      type: object
+      required:
+        - name
+        - description
+      properties:
+        name:
+          type: string
+          description: Name of the item to create
+          minLength: 1
+          maxLength: 100
+          example: "New Item"
+        description:
+          type: string
+          description: Description of the item to create
+          maxLength: 500
+          example: "Description of the new item"
+
+    UpdateItemRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Updated name of the item
+          minLength: 1
+          maxLength: 100
+          example: "Updated Item Name"
+        description:
+          type: string
+          description: Updated description of the item
+          maxLength: 500
+          example: "Updated description"
+        status:
+          type: string
+          enum: [active, inactive]
+          description: Updated status of the item
+          example: "inactive"
+
+    ApiResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Indicates if the request was successful
+        message:
+          type: string
+          description: Human-readable message about the operation
+
+    ItemResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/Item'
+
+    ItemListResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Item'
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error
+        - message
+        - statusCode
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: Error type or code
+          example: "ValidationError"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Invalid input provided"
+        statusCode:
+          type: integer
+          description: HTTP status code
+          example: 400
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the error occurred
+          example: "2024-01-15T10:30:00.000Z"
+
+  responses:
+    BadRequest:
+      description: Bad request - Invalid input or parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            validationError:
+              summary: Validation error
+              value:
+                success: false
+                error: "ValidationError"
+                message: "Invalid input provided"
+                statusCode: 400
+                timestamp: "2024-01-15T10:30:00.000Z"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            itemNotFound:
+              summary: Item not found
+              value:
+                success: false
+                error: "NotFoundError"
+                message: "Item with ID 999 not found"
+                statusCode: 404
+                timestamp: "2024-01-15T10:30:00.000Z"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            serverError:
+              summary: Server error
+              value:
+                success: false
+                error: "InternalServerError"
+                message: "An unexpected error occurred"
+                statusCode: 500
+                timestamp: "2024-01-15T10:30:00.000Z"
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication
+
+tags:
+  - name: Items
+    description: Operations related to item management

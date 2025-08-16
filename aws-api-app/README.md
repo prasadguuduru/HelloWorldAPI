@@ -208,6 +208,20 @@ After deployment, you'll receive:
 
 ## 📖 API Documentation
 
+### Interactive Documentation
+
+🌟 **View the complete interactive API documentation with Swagger UI:**
+
+- **GitHub Pages**: https://prasadguuduru.github.io/HelloWorldAPI/ *(Enable GitHub Pages in repository settings)*
+- **Local**: Run `cd docs && python -m http.server 8080` then visit http://localhost:8080
+
+The documentation includes:
+- ✅ Interactive API testing
+- ✅ Complete request/response examples  
+- ✅ Schema definitions and validation rules
+- ✅ Error response formats
+- ✅ Authentication details
+
 ### Base URL
 ```
 https://{api-gateway-id}.execute-api.{region}.amazonaws.com/{stage}
